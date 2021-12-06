@@ -1,0 +1,3 @@
+﻿  ServerMain.cpp
+C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\src\ServerMain.cpp(41,16): warning C4244: 'initializing': conversion from '__int64' to 'int', possible loss of data
+  TinyEngine.vcxproj -> C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\bin\Game_Server.exe
