@@ -2,6 +2,7 @@
 #include <SDL/SDL.h>
 #include <SDL/SDL_ttf.h>
 #include <stdio.h>
+#include <windows.h>
 
 // General stuff
 SDL_Window* window;
@@ -254,4 +255,25 @@ float engDeltaTime()
 float engElapsedTime()
 {
 	return (float)(clk_previous - clk_begin) / clk_frequency;
+}
+
+bool _engError(const char* format, ...)
+{
+	// Fetch message size
+	va_list vl;
+	va_start(vl, format);
+
+	int msgSize = vsnprintf(nullptr, 0, format, vl);
+	msgSize += 1; // Leave room for null terminator
+
+	char* msg = (char*)malloc(msgSize);
+
+	// Write message
+	vsprintf_s(msg, msgSize, format, vl);
+
+	va_end(vl);
+
+	// Show error box
+	MessageBoxA(NULL, msg, "Error", MB_OK);
+	return true;
 }

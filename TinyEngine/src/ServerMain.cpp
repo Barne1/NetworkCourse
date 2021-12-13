@@ -3,140 +3,303 @@
 #include <windows.h>
 #include <WinSock2.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "Player.h"
-
+#include "Server.h"
+#include "Network.h"
+#include "MessageType.h"
+#include "Projectile.h"
 #if SERVER
 
-#define USER_MAX 8
-struct User
-{
-	bool active = false;
-	SOCKET sock;
-};
-User users[USER_MAX];
+bool gameStarted = false;
 
-void Broadcast(const char* msg, int msgSize)
+void handleMessage(int userId, NetMessage msg)
 {
-	for (int i = 0; i < USER_MAX; i++)
+	MessageType type = msg.read<MessageType>();
+	switch(type)
 	{
-		if (!users[i].active)
-			continue;
-
-		send(users[i].sock, msg, msgSize, 0);
-	}
-}
-
-static DWORD receiveWorker(void* ptr)
-{
-	User* user = (User*)ptr;
-	char buffer[1024];
-
-	while (true)
-	{
-		int recvSize = recv(user->sock, buffer, 1024, 0);
-		if (recvSize == SOCKET_ERROR || recvSize == 0)
+		case MessageType::PlayerName:
 		{
-			user->active = false;
+			int playerId = msg.read<int>();
+			if (playerId != userId)
+			{
+				serverKickUser(userId);
+				break;
+			}
 
-			int userIdx = user - users;
-			engPrint("User %d disconnected.", userIdx);
-			return 0;
-		}
+			int nameLen = msg.read<unsigned char>();
+			if(nameLen > PLAYER_NAME_MAX)
+			{
+				serverKickUser(userId);
+				break;
+			}
 
-		engPrint("%.*s", recvSize, buffer);
-	}
-}
+			Player* player = &players[userId];
+			msg.read(player->name, nameLen);
 
-DWORD acceptWorker(void* ptr)
-{
-	SOCKET listenSock = reinterpret_cast<SOCKET>(ptr);
-	while (true)
-	{
-		sockaddr_in acceptAddr;
-		int acceptAddrLen = sizeof(acceptAddr);
-		
-		SOCKET newUserSock = accept(listenSock, (sockaddr*)&acceptAddr, &acceptAddrLen);
-		
+			player->name[nameLen] = 0;
 
-		int newUserIdx = -1;
-		for (int i = 0; i < USER_MAX; i++)
-		{
-			if (users[i].active)
-				continue;
-			newUserIdx = i;
+			serverBroadcast(msg);
 			break;
 		}
-		if (newUserIdx == -1)
+
+		case MessageType::PlayerPosition:
 		{
-			closesocket(newUserSock);
-			continue;
+			int playerId = msg.read<int>();
+			if(playerId != userId)
+			{
+				serverKickUser(userId);
+				break;
+			}
+
+			Player* player = &players[userId];
+			float newX = msg.read<float>();
+			float newY = msg.read<float>();
+			player->netReceivePosition(newX, newY);
+
+			serverBroadcast(msg);
+			break;
 		}
-		User* newUser = &users[newUserIdx];
-		newUser->active = true;
-		newUser->sock = newUserSock;
 
-		engPrint("[%d.%d.%d.%d:%d] connected.",
-			acceptAddr.sin_addr.s_net,
-			acceptAddr.sin_addr.s_host,
-			acceptAddr.sin_addr.s_lh,
-			acceptAddr.sin_addr.s_impno,
-			ntohs(acceptAddr.sin_port)
-		);
+		case MessageType::PlayerInput:
+		{
+			int playerId = msg.read<int>();
+			if (playerId != userId)
+			{
+				serverKickUser(userId);
+				break;
+			}
 
+			Player* player = &players[userId];
+			float newX = msg.read<float>();
+			float newY = msg.read<float>();
+			player->netReceivePosition(newX, newY);
 
-		CreateThread(
-			nullptr,
-			0,
-			receiveWorker,
-			newUser,
-			0,
-			nullptr
-		);
+			player->inputX = msg.read<char>();
+			player->inputY = msg.read<char>();
+			serverBroadcast(msg);
+			break;
+		}
+
+		case MessageType::PlayerRequestFire:
+		{
+			if (!gameStarted)
+				break;
+
+			int projectileIndex = -1;
+			for(int i = 0; i < PROJECTILE_MAX; i++)
+			{
+				if (projectiles[i].alive)
+					continue;
+
+				projectileIndex = i;
+				break;
+			}
+
+			if(projectileIndex == -1)
+			{
+				//engError("Ran out of projectiles");
+				break;
+			}
+
+			Player* player = &players[userId];
+
+			if (player->inputX == 0 && player->inputY == 0)
+				break;
+
+			if (engElapsedTime() - player->lastFireTime < playerFireCooldown)
+				break;
+
+			player->lastFireTime = engElapsedTime();
+			
+			projectiles[projectileIndex].spawn(userId, player->x, player->y, player->inputX, player->inputY);
+
+			NetMessage response;
+			response.write<MessageType>(MessageType::ProjectileSpawn);
+			response.write<int>(projectileIndex);
+			response.write<int>(userId);
+			response.write<float>(player->x);
+			response.write<float>(player->y);
+			response.write<char>(player->inputX);
+			response.write<char>(player->inputY);
+
+			serverBroadcast(response);
+			response.free();
+			break;
+		}
+		case MessageType::PlayerBoostStart:
+		{
+			int playerId = msg.read<int>();
+			if (playerId != userId)
+			{
+				serverKickUser(userId);
+				break;
+			}
+
+			Player* player = &players[userId];
+			player->startBoost();
+
+			serverBroadcast(msg);
+			break;
+		}
 	}
 }
-
 
 int WinMain(HINSTANCE, HINSTANCE, char*, int)
 {
 	engInit();
-	WSADATA wsaData;
-	WSAStartup(MAKEWORD(2,2), &wsaData);
+	netInit();
 
-	SOCKET listenSock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (listenSock == INVALID_SOCKET)
-	{
+	if (!serverStartup(666))
 		return 1;
-	}
 
-	sockaddr_in bindAddress;
-	bindAddress.sin_family = AF_INET;
-	bindAddress.sin_addr.s_addr = ADDR_ANY;
-	bindAddress.sin_port = htons(123);
-
-	if (bind(listenSock, (sockaddr*)&bindAddress, sizeof(bindAddress)))
+	while(engBeginFrame())
 	{
-		engPrint("bind() failed: %s", WSAGetLastError());
-	}
-	listen(listenSock, 10);
-	CreateThread(
-		nullptr,
-		0,
-		acceptWorker,
-		(void*)listenSock,
-		0,
-		nullptr
-	);
+		NetEvent event;
+		while(netPollEvent(&event))
+		{
+			switch(event.type)
+			{
+				case NetEventType::UserConnected:
+				{
+					if (gameStarted)
+					{
+						serverKickUser(event.userId);
+						break;
+					}
 
-	Player player;
-	player.x = 50;
-	player.y = 200;
+					engPrint("User %d connected", event.userId);
+					serverAcceptUser(event.userId);
 
-	while (engBeginFrame())
-	{
-		engSetColor(0x442222FF);
+					for (int i = 0; i < PLAYER_MAX; i++)
+					{
+						if (!players[i].alive)
+							continue;
+
+						{
+							NetMessage spawnMsg;
+							spawnMsg.write<MessageType>(MessageType::PlayerSpawn);
+							spawnMsg.write<int>(i);
+							spawnMsg.write<float>(players[i].x);
+							spawnMsg.write<float>(players[i].y);
+
+							serverSendTo(spawnMsg, event.userId);
+							spawnMsg.free();
+						}
+						{
+							NetMessage nameMsg;
+							nameMsg.write<MessageType>(MessageType::PlayerName);
+							nameMsg.write<int>(i);
+							nameMsg.write<unsigned char>(strlen(players[i].name));
+							nameMsg.write(players[i].name, strlen(players[i].name));
+
+							serverSendTo(nameMsg, event.userId);
+							nameMsg.free();
+						}
+					}
+
+					{
+						Player* player = &players[event.userId];
+						player->spawn(event.userId, rand() % 800, rand() % 600);
+
+						NetMessage msg;
+						msg.write<MessageType>(MessageType::PlayerSpawn);
+						msg.write<int>(event.userId);
+						msg.write<float>(player->x);
+						msg.write<float>(player->y);
+
+						serverBroadcast(msg);
+						msg.free();
+					}
+
+					{
+						NetMessage msg;
+						msg.write<MessageType>(MessageType::PlayerPossess);
+						msg.write<int>(event.userId);
+
+						serverSendTo(msg, event.userId);
+						msg.free();
+					}
+					break;
+				}
+
+				case NetEventType::UserDisconnected:
+				{
+					engPrint("User %d disconnected", event.userId);
+					players[event.userId].destroy();
+
+					NetMessage destroyMsg;
+					destroyMsg.write<MessageType>(MessageType::PlayerDestroy);
+					destroyMsg.write<int>(event.userId);
+
+					serverBroadcast(destroyMsg);
+					destroyMsg.free();
+					break;
+				}
+
+				case NetEventType::Message:
+				{
+					handleMessage(event.userId, event.message);
+					break;
+				}
+			}
+
+			event.free();
+		}
+
+		engSetColor(0xCC4444FF);
 		engClear();
 
-		player.Draw();
+		if (engKeyPressed(Key::Space))
+			gameStarted = !gameStarted;
+
+		engSetColor(0xFFFFFFFF);
+		engText(400, 12, gameStarted ? "STARTED" : "WAITING...");
+
+		// Check if we have a winner
+		if(gameStarted)
+		{
+			int numAlivePlayers = 0;
+			int lastAlivePlayer = -1;
+			for (auto& player : players)
+			{
+				if (player.alive)
+				{
+					++numAlivePlayers;
+					lastAlivePlayer = player.id;
+				}
+			}
+
+			if (numAlivePlayers == 1)
+				engTextf(400, 300, "'%s' WINS!", players[lastAlivePlayer].name);
+			else if (numAlivePlayers == 0)
+				engText(400, 300, "Draw :(");
+		}
+		
+
+		for (auto& player : players)
+		{
+			if (player.alive)
+				player.update();
+		}
+
+		for (auto& projectile : projectiles)
+		{
+			if (projectile.alive)
+				projectile.update();
+		}
+
+		for (auto& player : players)
+		{
+			if (player.alive)
+				player.draw();
+		}
+
+		for (auto& projectile : projectiles)
+		{
+			if (projectile.alive)
+				projectile.draw();
+		}
 	}
 
 	return 0;

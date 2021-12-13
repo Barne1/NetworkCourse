@@ -1,4 +1,7 @@
 #pragma once
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
 #include "Key.h"
 
 // Initializes the engine
@@ -49,3 +52,21 @@ bool engKeyReleased(Key key);
 // *** TIME *** //
 float engDeltaTime();
 float engElapsedTime();
+
+// *** DEBUGGING *** //
+template<typename T>
+bool _debugDoOnceHelper(T uniqueLambda)
+{
+	static bool hasRun = false;
+	if (hasRun)
+		return false;
+
+	hasRun = true;
+	return true;
+}
+
+bool _engError(const char* format, ...);
+#define DEBUG_BREAK (IsDebuggerPresent() && (__debugbreak(), 1))
+#define DO_ONCE (_debugDoOnceHelper([]{}))
+#define engError(format, ...) (DO_ONCE && _engError(format, __VA_ARGS__) && DEBUG_BREAK)
+#define engErrorAlways(format, ...) (_engError(format, __VA_ARGS__) && DEBUG_BREAK)

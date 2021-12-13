@@ -1,2 +1,6 @@
-﻿  ServerMain.cpp
+﻿  Player.cpp
+C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\src\Player.cpp(160,44): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\src\Player.cpp(160,21): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\src\Player.cpp(161,55): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
+C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\src\Player.cpp(161,17): warning C4244: 'argument': conversion from 'float' to 'int', possible loss of data
   TinyEngine.vcxproj -> C:\Users\Hugo\Documents\GitHub\NetworkCourse\TinyEngine\bin\Game_Client.exe
